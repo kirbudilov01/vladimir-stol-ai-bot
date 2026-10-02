@@ -24,6 +24,7 @@ class Store:
                     telegram_id integer primary key,
                     username text,
                     referrer_id integer,
+                    selected_style text not null default 'flowers',
                     free_used integer not null default 0,
                     credits integer not null default 0,
                     created_at text not null default current_timestamp
@@ -37,8 +38,21 @@ class Store:
                     output_path text not null,
                     created_at text not null default current_timestamp
                 );
+                create table if not exists payments (
+                    id integer primary key autoincrement,
+                    telegram_id integer not null,
+                    provider_charge_id text not null,
+                    payload text not null,
+                    amount integer not null,
+                    currency text not null,
+                    credits integer not null,
+                    created_at text not null default current_timestamp
+                );
                 """
             )
+            columns = {row["name"] for row in db.execute("pragma table_info(users)").fetchall()}
+            if "selected_style" not in columns:
+                db.execute("alter table users add column selected_style text not null default 'flowers'")
 
     def ensure_user(self, telegram_id: int, username: str | None, referrer_id: int | None = None) -> None:
         with self.connect() as db:
@@ -81,6 +95,19 @@ class Store:
                 (telegram_id, credits),
             )
 
+    def set_style(self, telegram_id: int, style: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "insert into users (telegram_id, selected_style) values (?, ?) "
+                "on conflict(telegram_id) do update set selected_style=excluded.selected_style",
+                (telegram_id, style),
+            )
+
+    def selected_style(self, telegram_id: int) -> str:
+        with self.connect() as db:
+            row = db.execute("select selected_style from users where telegram_id=?", (telegram_id,)).fetchone()
+        return row["selected_style"] if row else "flowers"
+
     def save_generation(self, data: dict[str, Any]) -> None:
         with self.connect() as db:
             db.execute(
@@ -88,9 +115,21 @@ class Store:
                 (data["telegram_id"], data["style"], data["prompt"], data["input_path"], data["output_path"]),
             )
 
+    def save_payment(self, telegram_id: int, provider_charge_id: str, payload: str, amount: int, currency: str, credits: int) -> None:
+        with self.connect() as db:
+            db.execute(
+                """
+                insert into payments (telegram_id, provider_charge_id, payload, amount, currency, credits)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (telegram_id, provider_charge_id, payload, amount, currency, credits),
+            )
+            db.execute("update users set credits=credits+? where telegram_id=?", (credits, telegram_id))
+
     def stats(self) -> dict[str, int]:
         with self.connect() as db:
             users = db.execute("select count(*) as c from users").fetchone()["c"]
             generations = db.execute("select count(*) as c from generations").fetchone()["c"]
             referrals = db.execute("select count(*) as c from users where referrer_id is not null").fetchone()["c"]
-        return {"users": users, "generations": generations, "referrals": referrals}
+            payments = db.execute("select count(*) as c from payments").fetchone()["c"]
+        return {"users": users, "generations": generations, "referrals": referrals, "payments": payments}

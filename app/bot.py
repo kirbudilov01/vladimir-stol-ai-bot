@@ -11,7 +11,9 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     ReplyKeyboardMarkup,
     WebAppInfo,
 )
@@ -54,7 +56,12 @@ STYLE_ALIASES = {
     "car": "car",
 }
 
-USER_STYLE: dict[int, str] = {}
+PLAN_CATALOG = {
+    "one": {"title": "1 генерация", "credits": 1, "amount": 9900},
+    "three": {"title": "3 генерации", "credits": 3, "amount": 27900},
+    "five": {"title": "5 генераций", "credits": 5, "amount": 44900},
+    "ten": {"title": "10 генераций", "credits": 10, "amount": 49900},
+}
 
 
 def main_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
@@ -87,7 +94,16 @@ def resolve_style(text: str | None, telegram_id: int) -> str:
         first = text.strip().split()[0].lower()
         if first in STYLE_ALIASES:
             return STYLE_ALIASES[first]
-    return USER_STYLE.get(telegram_id, "flowers")
+    return "flowers"
+
+
+def plan_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Купить 1", callback_data="buy:one"), InlineKeyboardButton(text="Купить 3", callback_data="buy:three")],
+            [InlineKeyboardButton(text="Купить 5", callback_data="buy:five"), InlineKeyboardButton(text="Купить 10", callback_data="buy:ten")],
+        ]
+    )
 
 
 async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: ImageGenerator, settings: Settings) -> None:
@@ -118,7 +134,8 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
     @dp.callback_query(F.data.startswith("style:"))
     async def style_callback(callback) -> None:
         style = callback.data.split(":", 1)[1]
-        USER_STYLE[callback.from_user.id] = style
+        store.ensure_user(callback.from_user.id, callback.from_user.username)
+        store.set_style(callback.from_user.id, style)
         await callback.answer(f"Выбран стиль: {STYLE_LABELS.get(style, style)}")
         await callback.message.answer(
             f"Стиль сохранен: {STYLE_LABELS.get(style, style)}. Теперь отправь фото.",
@@ -136,14 +153,61 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
         if style not in STYLE_LABELS:
             await message.answer("Такого стиля пока нет. Выбери один из готовых сценариев.")
             return
-        USER_STYLE[message.from_user.id] = style
+        store.ensure_user(message.from_user.id, message.from_user.username)
+        store.set_style(message.from_user.id, style)
         await message.answer(f"Стиль из mini app сохранен: {STYLE_LABELS[style]}. Отправь фото.")
 
     @dp.message(Command("plans"))
     @dp.message(F.text.casefold() == "тарифы")
     async def plans(message: Message) -> None:
         store.ensure_user(message.from_user.id, message.from_user.username)
-        await message.answer(PLANS)
+        await message.answer(PLANS, reply_markup=plan_keyboard())
+
+    @dp.callback_query(F.data.startswith("buy:"))
+    async def buy_callback(callback) -> None:
+        store.ensure_user(callback.from_user.id, callback.from_user.username)
+        plan_key = callback.data.split(":", 1)[1]
+        plan = PLAN_CATALOG.get(plan_key)
+        if plan is None:
+            await callback.answer("Такого тарифа нет.", show_alert=True)
+            return
+        if not settings.payment_provider_token:
+            await callback.answer("Платежи пока не подключены.", show_alert=True)
+            await callback.message.answer("Платежный provider token не задан. Админ может выдать кредиты вручную командой /grant.")
+            return
+        payload = f"plan:{plan_key}:{callback.from_user.id}"
+        await callback.message.answer_invoice(
+            title=f"STOL AI: {plan['title']}",
+            description=f"{plan['credits']} кредит(ов) для генерации фото",
+            payload=payload,
+            provider_token=settings.payment_provider_token,
+            currency=settings.payment_currency,
+            prices=[LabeledPrice(label=plan["title"], amount=plan["amount"])],
+        )
+        await callback.answer()
+
+    @dp.pre_checkout_query()
+    async def pre_checkout(pre_checkout_query: PreCheckoutQuery) -> None:
+        payload = pre_checkout_query.invoice_payload
+        parts = payload.split(":")
+        ok = len(parts) == 3 and parts[0] == "plan" and parts[1] in PLAN_CATALOG
+        await pre_checkout_query.answer(ok=ok, error_message=None if ok else "Неизвестный тариф.")
+
+    @dp.message(F.successful_payment)
+    async def successful_payment(message: Message) -> None:
+        store.ensure_user(message.from_user.id, message.from_user.username)
+        payment = message.successful_payment
+        plan_key = payment.invoice_payload.split(":")[1]
+        plan = PLAN_CATALOG[plan_key]
+        store.save_payment(
+            telegram_id=message.from_user.id,
+            provider_charge_id=payment.provider_payment_charge_id,
+            payload=payment.invoice_payload,
+            amount=payment.total_amount,
+            currency=payment.currency,
+            credits=plan["credits"],
+        )
+        await message.answer(f"Оплата прошла. Начислено кредитов: {plan['credits']}.")
 
     @dp.message(Command("balance"))
     @dp.message(F.text.casefold() == "баланс")
@@ -151,7 +215,7 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
         store.ensure_user(message.from_user.id, message.from_user.username)
         user = store.user(message.from_user.id)
         free_left = max(0, settings.free_generations - user["free_used"])
-        style = STYLE_LABELS.get(USER_STYLE.get(message.from_user.id, "flowers"), "Букет")
+        style = STYLE_LABELS.get(store.selected_style(message.from_user.id), "Букет")
         await message.answer(f"Баланс: {user['credits']} кредитов.\nБесплатных генераций осталось: {free_left}.\nТекущий стиль: {style}.")
 
     @dp.message(Command("ref"))
@@ -175,6 +239,7 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
             f"Пользователей: {stats['users']}\n"
             f"Генераций: {stats['generations']}\n"
             f"Реферальных входов: {stats['referrals']}\n\n"
+            f"Оплат: {stats['payments']}\n\n"
             "Выдать кредиты: /grant <telegram_id> <credits>"
         )
 
@@ -197,6 +262,12 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
             await message.answer("Бесплатная генерация уже использована. Нажми Тарифы или напиши /plans.", reply_markup=main_keyboard(settings))
             return
         style = resolve_style(message.caption, message.from_user.id)
+        if style == "flowers" and not (message.caption and message.caption.strip().split()[0].lower() in STYLE_ALIASES):
+            style = store.selected_style(message.from_user.id)
+        file_size = message.photo[-1].file_size or 0
+        if file_size > settings.max_photo_mb * 1024 * 1024:
+            await message.answer(f"Фото слишком тяжелое. Лимит: {settings.max_photo_mb} MB.")
+            return
         await message.answer(f"Фото принято. Стиль: {STYLE_LABELS.get(style, style)}. Генерирую результат.")
         token = uuid4().hex
         input_path = storage_dir / f"{message.from_user.id}_{token}_input.jpg"

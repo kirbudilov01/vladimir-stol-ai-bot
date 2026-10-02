@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_image_model: str = "gpt-image-1"
     free_generations: int = 1
+    payment_provider_token: str = ""
+    payment_currency: str = "RUB"
+    max_photo_mb: int = 15
 
     @property
     def admins(self) -> set[int]:
@@ -22,4 +25,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
