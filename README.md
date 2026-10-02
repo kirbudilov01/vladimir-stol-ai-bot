@@ -1,20 +1,57 @@
 # STOL AI Telegram Bot
 
-Telegram bot + mini app shell for viral "event photo" generations: choose a style, upload a selfie/reference photo, receive a generated image, and share a referral link.
+Telegram bot + mini app shell for viral "event photo" generations. The product flow is simple: user chooses a scenario, sends a photo, receives a finished image, and can share a referral link.
 
-## What is included
+## Current Product State
 
-- Telegram bot with `/start`, `/plans`, `/balance`, `/ref`, `/help`.
+This repo is ready to run as a working MVP after you add real secrets to `.env`.
+
+Implemented:
+
+- Telegram onboarding and persistent keyboard.
+- Style selection in Telegram and in the mini app.
+- Photo upload flow with clear status/error messages.
 - One free generation per user.
-- SQLite user/generation/referral tracking.
-- Admin `/grant <telegram_id> <credits>` command.
-- Dark neon mini app page served from `webapp/index.html`.
-- Pluggable generation provider:
-  - `mock` works locally without paid APIs.
-  - `openai` uses the OpenAI Images API when `OPENAI_API_KEY` is set.
-- Docker and docker-compose setup.
+- Credit balance and admin credit grants.
+- Referral links for bloggers and media buyers.
+- SQLite users/generations/referral tracking.
+- Admin stats via `/admin`.
+- Docker and docker-compose deployment.
+- Provider switch:
+  - `mock` for local/demo mode without paid APIs.
+  - `openai` for real image generation when `OPENAI_API_KEY` is configured.
 
-## Quick start
+Not included yet by design:
+
+- Real Telegram bot token.
+- Production hosting URL.
+- Real payment provider integration.
+- Final commercial prompts after live image tests.
+
+## External Services Needed
+
+Required:
+
+- Telegram BotFather bot token: `BOT_TOKEN`.
+- A server/VPS or any Docker host.
+
+Required for real AI output:
+
+- OpenAI API key: `OPENAI_API_KEY`.
+- Set `GENERATION_PROVIDER=openai`.
+
+Optional for mini app:
+
+- Public HTTPS hosting for `webapp/index.html`.
+- Add that URL to `PUBLIC_WEBAPP_URL`.
+- Configure the domain in BotFather if Telegram asks for it.
+
+Optional for payments:
+
+- Telegram Payments provider token, YooKassa, CloudPayments, Stripe, or another provider.
+- The repo currently supports manual credit grants with `/grant`; payment callbacks should be added after the provider is chosen.
+
+## Quick Start
 
 ```bash
 cp .env.example .env
@@ -24,7 +61,7 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-For production:
+Production:
 
 ```bash
 docker compose up -d --build
@@ -32,15 +69,40 @@ docker compose up -d --build
 
 ## Environment
 
-Create `.env` from `.env.example`.
+```bash
+BOT_TOKEN=123456:telegram-bot-token
+ADMIN_IDS=123456789
+DATABASE_PATH=./data/stol_ai.sqlite3
+PUBLIC_WEBAPP_URL=
+GENERATION_PROVIDER=mock
+OPENAI_API_KEY=
+OPENAI_IMAGE_MODEL=gpt-image-1
+FREE_GENERATIONS=1
+```
 
-- `BOT_TOKEN` is required.
-- `ADMIN_IDS` is a comma-separated list of Telegram user ids.
-- `GENERATION_PROVIDER=mock` for local demo.
-- `GENERATION_PROVIDER=openai` and `OPENAI_API_KEY=...` for real image generation.
-- `PUBLIC_WEBAPP_URL` should point to the hosted `/webapp/index.html` URL if you want the Telegram mini app button.
+## User Flow
 
-## Notes for launch
+1. User opens `/start`.
+2. User taps `Стили` or opens mini app.
+3. User selects `Букет`, `Пара`, `Дубай`, or `Авто`.
+4. User sends a photo.
+5. Bot sends the generated result.
+6. User can check `Баланс`, open `Тарифы`, or copy `Рефералка`.
 
-The bot intentionally does not store tokens in code. Add a real bot token, deploy to a VPS, set `PUBLIC_WEBAPP_URL`, and run `docker compose up -d --build`.
+## Admin Flow
 
+- `/admin` shows users, generations, referral starts.
+- `/grant <telegram_id> <credits>` adds paid credits manually.
+- `.env` `ADMIN_IDS` controls who can use admin commands.
+
+## Quality Notes
+
+The bot is production-shaped, but final image quality depends on:
+
+- prompt tuning on real photos;
+- selected image model/provider;
+- payment provider requirements;
+- real traffic and abuse limits;
+- hosting stability and backups.
+
+For launch, start with `GENERATION_PROVIDER=mock` only for bot QA, then switch to `openai` and test 20-30 real generations before buying traffic.

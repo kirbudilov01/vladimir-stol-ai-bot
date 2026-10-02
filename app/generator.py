@@ -16,6 +16,13 @@ STYLES = {
     "car": "night luxury car pickup, neon city lights, realistic social media photo",
 }
 
+STYLE_LABELS = {
+    "flowers": "Букет",
+    "couple": "Пара",
+    "dubai": "Дубай",
+    "car": "Авто",
+}
+
 
 def build_prompt(style: str) -> str:
     base = STYLES.get(style, STYLES["flowers"])
@@ -72,4 +79,3 @@ class ImageGenerator:
         if not data:
             raise RuntimeError("OpenAI returned no image data")
         output_path.write_bytes(base64.b64decode(data))
-

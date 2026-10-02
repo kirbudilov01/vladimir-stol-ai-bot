@@ -1,34 +1,93 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import BufferedInputFile, KeyboardButton, Message, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import (
+    BufferedInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
 
 from .config import Settings
 from .db import Store
-from .generator import ImageGenerator
+from .generator import ImageGenerator, STYLE_LABELS
 
 
 PLANS = (
-    "Тарифы:\n"
+    "Тарифы\n\n"
     "1 генерация - 99 рублей\n"
     "3 генерации - 279 рублей\n"
     "5 генераций - 449 рублей\n"
     "10 генераций - 499 рублей\n"
     "Безлимит на месяц - 1490 рублей\n"
     "Безлимит навсегда - 9999 рублей\n\n"
-    "Первая генерация бесплатная. Оплату можно подключить через Telegram Payments или выдавать кредиты командой /grant."
+    "Сейчас платежи не включены в код специально: после выбора провайдера подключается Telegram Payments/YooKassa/CloudPayments. "
+    "До этого админ может выдавать кредиты командой /grant."
 )
 
+HELP = (
+    "Как пользоваться\n\n"
+    "1. Нажми Стили и выбери сценарий.\n"
+    "2. Отправь свое фото или референс.\n"
+    "3. Получи готовую картинку для сторис.\n\n"
+    "Команды: /balance, /plans, /ref, /styles, /help."
+)
 
-def keyboard(settings: Settings) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text="Сгенерировать фото")], [KeyboardButton(text="Тарифы"), KeyboardButton(text="Рефералка")]]
+STYLE_ALIASES = {
+    "букет": "flowers",
+    "flowers": "flowers",
+    "flower": "flowers",
+    "пара": "couple",
+    "couple": "couple",
+    "дубай": "dubai",
+    "dubai": "dubai",
+    "авто": "car",
+    "машина": "car",
+    "car": "car",
+}
+
+USER_STYLE: dict[int, str] = {}
+
+
+def main_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text="Стили"), KeyboardButton(text="Баланс")],
+        [KeyboardButton(text="Тарифы"), KeyboardButton(text="Рефералка")],
+    ]
     if settings.public_webapp_url:
         rows.insert(0, [KeyboardButton(text="Открыть mini app", web_app=WebAppInfo(url=settings.public_webapp_url))])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder="Отправь фото для генерации")
+
+
+def style_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Букет", callback_data="style:flowers"),
+                InlineKeyboardButton(text="Пара", callback_data="style:couple"),
+            ],
+            [
+                InlineKeyboardButton(text="Дубай", callback_data="style:dubai"),
+                InlineKeyboardButton(text="Авто", callback_data="style:car"),
+            ],
+        ]
+    )
+
+
+def resolve_style(text: str | None, telegram_id: int) -> str:
+    if text:
+        first = text.strip().split()[0].lower()
+        if first in STYLE_ALIASES:
+            return STYLE_ALIASES[first]
+    return USER_STYLE.get(telegram_id, "flowers")
 
 
 async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: ImageGenerator, settings: Settings) -> None:
@@ -40,10 +99,45 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
         referrer = int(command.args) if command.args and command.args.isdigit() else None
         store.ensure_user(message.from_user.id, message.from_user.username, referrer)
         await message.answer(
-            "STOL AI: сделай реалистичное инфоповодное фото для сторис.\n\n"
-            "Отправь фото и в подписи укажи стиль: flowers, couple, dubai или car.",
-            reply_markup=keyboard(settings),
+            "STOL AI\n\n"
+            "Сделай реалистичное инфоповодное фото для сторис. Первая генерация бесплатная.\n\n"
+            "Начни с кнопки Стили или просто отправь фото.",
+            reply_markup=main_keyboard(settings),
         )
+
+    @dp.message(Command("help"))
+    @dp.message(F.text.casefold() == "помощь")
+    async def help_message(message: Message) -> None:
+        await message.answer(HELP, reply_markup=main_keyboard(settings))
+
+    @dp.message(Command("styles"))
+    @dp.message(F.text.casefold() == "стили")
+    async def styles(message: Message) -> None:
+        await message.answer("Выбери сценарий для следующей генерации.", reply_markup=style_keyboard())
+
+    @dp.callback_query(F.data.startswith("style:"))
+    async def style_callback(callback) -> None:
+        style = callback.data.split(":", 1)[1]
+        USER_STYLE[callback.from_user.id] = style
+        await callback.answer(f"Выбран стиль: {STYLE_LABELS.get(style, style)}")
+        await callback.message.answer(
+            f"Стиль сохранен: {STYLE_LABELS.get(style, style)}. Теперь отправь фото.",
+            reply_markup=main_keyboard(settings),
+        )
+
+    @dp.message(F.web_app_data)
+    async def web_app_style(message: Message) -> None:
+        try:
+            payload = json.loads(message.web_app_data.data)
+        except json.JSONDecodeError:
+            await message.answer("Mini app прислал непонятные данные. Выбери стиль кнопкой Стили.")
+            return
+        style = payload.get("style")
+        if style not in STYLE_LABELS:
+            await message.answer("Такого стиля пока нет. Выбери один из готовых сценариев.")
+            return
+        USER_STYLE[message.from_user.id] = style
+        await message.answer(f"Стиль из mini app сохранен: {STYLE_LABELS[style]}. Отправь фото.")
 
     @dp.message(Command("plans"))
     @dp.message(F.text.casefold() == "тарифы")
@@ -52,11 +146,13 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
         await message.answer(PLANS)
 
     @dp.message(Command("balance"))
+    @dp.message(F.text.casefold() == "баланс")
     async def balance(message: Message) -> None:
         store.ensure_user(message.from_user.id, message.from_user.username)
         user = store.user(message.from_user.id)
         free_left = max(0, settings.free_generations - user["free_used"])
-        await message.answer(f"Баланс: {user['credits']} кредитов. Бесплатных генераций осталось: {free_left}.")
+        style = STYLE_LABELS.get(USER_STYLE.get(message.from_user.id, "flowers"), "Букет")
+        await message.answer(f"Баланс: {user['credits']} кредитов.\nБесплатных генераций осталось: {free_left}.\nТекущий стиль: {style}.")
 
     @dp.message(Command("ref"))
     @dp.message(F.text.casefold() == "рефералка")
@@ -65,7 +161,21 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
         await message.answer(
             "Реферальная ссылка для блогеров и трафферов:\n"
             f"https://t.me/{me.username}?start={message.from_user.id}\n\n"
-            "Коммерческое правило: 50% от привлечённых оплат ведём в CRM/таблице при подключении платежей."
+            "Коммерческое правило: 50% от привлеченных оплат. Выплаты фиксируются после подключения платежей/CRM."
+        )
+
+    @dp.message(Command("admin"))
+    async def admin(message: Message) -> None:
+        if message.from_user.id not in settings.admins:
+            await message.answer("Команда только для администратора.")
+            return
+        stats = store.stats()
+        await message.answer(
+            "Админ-панель\n\n"
+            f"Пользователей: {stats['users']}\n"
+            f"Генераций: {stats['generations']}\n"
+            f"Реферальных входов: {stats['referrals']}\n\n"
+            "Выдать кредиты: /grant <telegram_id> <credits>"
         )
 
     @dp.message(Command("grant"))
@@ -84,15 +194,22 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
     async def photo(message: Message) -> None:
         store.ensure_user(message.from_user.id, message.from_user.username)
         if not store.can_generate(message.from_user.id, settings.free_generations):
-            await message.answer("Бесплатная генерация уже использована. Напиши /plans, чтобы пополнить баланс.")
+            await message.answer("Бесплатная генерация уже использована. Нажми Тарифы или напиши /plans.", reply_markup=main_keyboard(settings))
             return
-        style = (message.caption or "flowers").strip().split()[0].lower()
-        await message.answer("Принял фото. Генерирую, обычно это занимает до минуты.")
+        style = resolve_style(message.caption, message.from_user.id)
+        await message.answer(f"Фото принято. Стиль: {STYLE_LABELS.get(style, style)}. Генерирую результат.")
         token = uuid4().hex
         input_path = storage_dir / f"{message.from_user.id}_{token}_input.jpg"
         output_path = storage_dir / f"{message.from_user.id}_{token}_output.jpg"
         await bot.download(message.photo[-1], destination=input_path)
-        prompt = await generator.generate(input_path, output_path, style)
+        try:
+            prompt = await generator.generate(input_path, output_path, style)
+        except Exception as exc:
+            await message.answer(
+                "Генерация не прошла. Проверь ключи/провайдера в .env или попробуй другое фото.\n"
+                f"Техническая причина: {type(exc).__name__}"
+            )
+            return
         store.charge_generation(message.from_user.id, settings.free_generations)
         store.save_generation(
             {
@@ -104,8 +221,12 @@ async def register_handlers(dp: Dispatcher, bot: Bot, store: Store, generator: I
             }
         )
         result = BufferedInputFile(output_path.read_bytes(), filename="stol-ai-result.jpg")
-        await message.answer_photo(photo=result, caption="Готово. Можно сделать ещё стиль: flowers, couple, dubai, car.")
+        await message.answer_photo(
+            photo=result,
+            caption="Готово. Можно отправить еще фото или выбрать другой стиль.",
+            reply_markup=main_keyboard(settings),
+        )
 
     @dp.message()
     async def fallback(message: Message) -> None:
-        await message.answer("Отправь фото с подписью-стилем: flowers, couple, dubai или car.", reply_markup=keyboard(settings))
+        await message.answer("Я жду фото. Перед отправкой можно выбрать стиль кнопкой Стили.", reply_markup=main_keyboard(settings))

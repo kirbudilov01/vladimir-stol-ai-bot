@@ -6,40 +6,49 @@
     <title>STOL AI</title>
     <style>
       :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; min-height: 100vh; background: #060712; color: #f6f7ff; }
-      main { max-width: 520px; margin: 0 auto; padding: 28px 18px; }
-      h1 { font-size: 34px; margin: 0 0 10px; letter-spacing: 0; }
-      p { color: #b8bdd7; line-height: 1.5; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 22px 0; }
+      body { margin: 0; min-height: 100vh; background: #070912; color: #f6f7ff; }
+      main { max-width: 520px; margin: 0 auto; padding: 24px 18px 28px; }
+      h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: 0; }
+      p { color: #bdc3df; line-height: 1.5; margin: 0; }
+      .status { margin: 18px 0; padding: 12px; border: 1px solid #29304f; border-radius: 8px; color: #dfe4ff; background: #101526; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 18px 0; }
       button { border: 1px solid #2d3152; background: #11162a; color: #fff; padding: 14px; border-radius: 8px; font-size: 15px; }
-      button.active { border-color: #55fff4; box-shadow: 0 0 22px rgba(85, 255, 244, .24); }
+      button.active { border-color: #55fff4; box-shadow: 0 0 0 2px rgba(85, 255, 244, .18); }
       .cta { width: 100%; background: #70ffe7; color: #061014; font-weight: 800; border: 0; }
-      .price { margin-top: 26px; border-top: 1px solid #272b4a; padding-top: 18px; font-size: 15px; color: #d9ddff; }
+      .price { margin-top: 22px; border-top: 1px solid #272b4a; padding-top: 16px; font-size: 15px; color: #d9ddff; }
     </style>
   </head>
   <body>
     <main>
       <h1>STOL AI</h1>
-      <p>Выбери стиль, отправь фото в бот и получи реалистичное фото для сторис. Первая генерация бесплатная.</p>
+      <p>Выбери сценарий, вернись в бот и отправь фото. Первая генерация бесплатная.</p>
+      <div class="status" id="status">Выбран стиль: Букет</div>
       <div class="grid">
-        <button class="active">Букет</button>
-        <button>Пара</button>
-        <button>Дубай</button>
-        <button>Авто</button>
+        <button class="active" data-style="flowers">Букет</button>
+        <button data-style="couple">Пара</button>
+        <button data-style="dubai">Дубай</button>
+        <button data-style="car">Авто</button>
       </div>
-      <button class="cta" onclick="Telegram.WebApp.close()">Перейти в бота</button>
+      <button class="cta" id="send">Сохранить стиль</button>
       <div class="price">1 генерация - 99 рублей · 10 генераций - 499 рублей · безлимит - 1490 рублей/мес.</div>
     </main>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
+      let selected = "flowers";
+      const labels = { flowers: "Букет", couple: "Пара", dubai: "Дубай", car: "Авто" };
       document.querySelectorAll(".grid button").forEach((button) => {
         button.addEventListener("click", () => {
           document.querySelectorAll(".grid button").forEach((item) => item.classList.remove("active"));
           button.classList.add("active");
+          selected = button.dataset.style;
+          document.querySelector("#status").textContent = `Выбран стиль: ${labels[selected]}`;
         });
+      });
+      document.querySelector("#send").addEventListener("click", () => {
+        Telegram.WebApp.sendData(JSON.stringify({ style: selected }));
+        Telegram.WebApp.close();
       });
       Telegram.WebApp.ready();
     </script>
   </body>
 </html>
-

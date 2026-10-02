@@ -88,3 +88,9 @@ class Store:
                 (data["telegram_id"], data["style"], data["prompt"], data["input_path"], data["output_path"]),
             )
 
+    def stats(self) -> dict[str, int]:
+        with self.connect() as db:
+            users = db.execute("select count(*) as c from users").fetchone()["c"]
+            generations = db.execute("select count(*) as c from generations").fetchone()["c"]
+            referrals = db.execute("select count(*) as c from users where referrer_id is not null").fetchone()["c"]
+        return {"users": users, "generations": generations, "referrals": referrals}
